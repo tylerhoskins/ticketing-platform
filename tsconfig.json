@@ -21,5 +21,7 @@
     "paths": {
       "@/*": ["src/*"]
     }
-  }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["frontend/**/*", "node_modules", "dist"]
 }
