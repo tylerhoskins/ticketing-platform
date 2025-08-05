@@ -158,13 +158,6 @@ The application includes comprehensive error handling:
    CMD ["npm", "start"]
    ```
 
-## Browser Support
-
-- Chrome 90+
-- Firefox 88+
-- Safari 14+
-- Edge 90+
-
 ## Contributing
 
 This is a demo application. In a production environment, you would want to add:

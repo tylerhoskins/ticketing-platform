@@ -3,11 +3,11 @@
 # Frontend Startup Script
 # This script sets up and starts the Next.js frontend application
 
-echo "🎟️  Starting Flicket Frontend..."
+echo "🎟️  Starting Frontend..."
 
 # Check if Node.js is installed
 if ! command -v node &> /dev/null; then
-    echo "❌ Node.js is not installed. Please install Node.js 18+ first."
+    echo "❌ Node.js is not installed. Please install Node.js 20+ first."
     exit 1
 fi
 
