@@ -1,4 +1,4 @@
-import { IsInt, Min, Max, IsUUID, IsOptional } from 'class-validator';
+import { IsInt, Min, Max, IsUUID, IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class PurchaseTicketDto {
@@ -7,6 +7,11 @@ export class PurchaseTicketDto {
   @Max(10, { message: 'Cannot purchase more than 10 tickets at once' })
   @Type(() => Number)
   quantity!: number;
+
+  @IsString({ message: 'User session ID must be a string' })
+  @MinLength(1, { message: 'User session ID cannot be empty' })
+  @MaxLength(255, { message: 'User session ID too long' })
+  user_session_id!: string;
 }
 
 export class TicketResponseDto {
@@ -29,6 +34,11 @@ export class PurchaseResponseDto {
   purchase_id?: string;
   tickets?: TicketResponseDto[];
   total_purchased?: number;
+  // New fields for intent-based purchasing
+  intent_id?: string;
+  queue_position?: number;
+  estimated_wait_time?: number; // in seconds
+  is_intent_based?: boolean;
 }
 
 export class TicketQueryDto {

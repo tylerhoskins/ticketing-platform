@@ -1,8 +1,10 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { EventRepository } from '../../repositories/event.repository';
+import { PurchaseIntentRepository } from '../../repositories/purchase-intent.repository';
 import { EventService } from '../event/event.service';
 import { PurchaseTicketDto, PurchaseResponseDto, TicketResponseDto } from '../../dto/ticket.dto';
 import { Ticket } from '../../entities/ticket.entity';
+import { PurchaseIntent, PurchaseIntentStatus } from '../../entities/purchase-intent.entity';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -11,14 +13,15 @@ export class TicketService {
 
   constructor(
     private readonly eventRepository: EventRepository,
+    private readonly purchaseIntentRepository: PurchaseIntentRepository,
     private readonly eventService: EventService,
   ) {}
 
   /**
-   * Purchase tickets for an event with concurrency control
+   * Create a purchase intent for an event (new intent-based flow)
    */
   async purchaseTickets(eventId: string, purchaseDto: PurchaseTicketDto): Promise<PurchaseResponseDto> {
-    this.logger.log(`Attempting to purchase ${purchaseDto.quantity} tickets for event ${eventId}`);
+    this.logger.log(`Creating purchase intent for ${purchaseDto.quantity} tickets for event ${eventId} (session: ${purchaseDto.user_session_id})`);
 
     // Validate UUID format
     if (!this.isValidUUID(eventId)) {
@@ -37,52 +40,77 @@ export class TicketService {
       if (new Date(event.date) <= new Date()) {
         reasons.push('Event has already occurred');
       }
-      if (!event.hasAvailableTickets(purchaseDto.quantity)) {
-        reasons.push(`Only ${event.available_tickets} tickets available`);
+      if (event.available_tickets === 0) {
+        reasons.push('No tickets available');
       }
       
-      const message = reasons.length > 0 ? reasons.join(', ') : 'Tickets not available for purchase';
-      this.logger.warn(`Purchase failed for event ${eventId}: ${message}`);
+      const message = reasons.length > 0 ? reasons.join(', ') : 'Event not available for purchase';
+      this.logger.warn(`Purchase intent creation failed for event ${eventId}: ${message}`);
       
       return {
         success: false,
         message,
+        is_intent_based: true,
       };
     }
 
-    // Generate unique purchase ID for this transaction
-    const purchaseId = uuidv4();
-    
     try {
-      // Use repository's concurrency-safe purchase method
-      const result = await this.eventRepository.purchaseTickets(eventId, purchaseDto.quantity, purchaseId);
-      
-      if (!result.success) {
-        this.logger.warn(`Purchase failed for event ${eventId}: ${result.message}`);
+      // Check if user already has an active intent for this event
+      const existingIntent = await this.purchaseIntentRepository.getIntentBySessionAndEvent(
+        purchaseDto.user_session_id,
+        eventId
+      );
+
+      if (existingIntent) {
+        this.logger.log(`User ${purchaseDto.user_session_id} already has an active intent for event ${eventId}`);
+        
+        // Get current queue position
+        const position = await this.purchaseIntentRepository.getQueuePosition(
+          purchaseDto.user_session_id,
+          eventId
+        );
+
         return {
-          success: false,
-          message: result.message,
+          success: true,
+          message: `You already have an active purchase intent for this event`,
+          intent_id: existingIntent.id,
+          queue_position: position?.position,
+          estimated_wait_time: position?.estimatedWaitTime,
+          is_intent_based: true,
         };
       }
 
-      const ticketDtos = result.tickets?.map(ticket => this.mapToTicketResponseDto(ticket, event)) || [];
-      
-      this.logger.log(`Successfully purchased ${purchaseDto.quantity} tickets for event ${eventId}, purchase ID: ${purchaseId}`);
-      
+      // Create new purchase intent
+      const intent = await this.purchaseIntentRepository.createIntent({
+        eventId,
+        userSessionId: purchaseDto.user_session_id,
+        requestedQuantity: purchaseDto.quantity,
+      });
+
+      // Get initial queue position
+      const position = await this.purchaseIntentRepository.getQueuePosition(
+        purchaseDto.user_session_id,
+        eventId
+      );
+
+      this.logger.log(`Created purchase intent ${intent.id} for user ${purchaseDto.user_session_id}, position: ${position?.position}`);
+
       return {
         success: true,
-        message: `Successfully purchased ${purchaseDto.quantity} tickets`,
-        purchase_id: purchaseId,
-        tickets: ticketDtos,
-        total_purchased: purchaseDto.quantity,
+        message: `Purchase intent created successfully. You are ${position?.position ? `#${position.position}` : ''} in queue.`,
+        intent_id: intent.id,
+        queue_position: position?.position,
+        estimated_wait_time: position?.estimatedWaitTime,
+        is_intent_based: true,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(`Unexpected error during ticket purchase: ${errorMessage}`, errorStack);
+      this.logger.error(`Unexpected error during purchase intent creation: ${errorMessage}`, errorStack);
       return {
         success: false,
-        message: 'An unexpected error occurred during ticket purchase',
+        message: 'An unexpected error occurred while creating purchase intent',
+        is_intent_based: true,
       };
     }
   }
@@ -176,6 +204,167 @@ export class TicketService {
       },
       tickets,
     };
+  }
+
+  /**
+   * Get status of a purchase intent
+   */
+  async getIntentStatus(intentId: string): Promise<{
+    intent: PurchaseIntent;
+    queuePosition?: number;
+    estimatedWaitTime?: number;
+  }> {
+    if (!this.isValidUUID(intentId)) {
+      throw new BadRequestException('Invalid intent ID format');
+    }
+
+    const intent = await this.purchaseIntentRepository.findById(intentId, ['event']);
+
+    if (!intent) {
+      throw new NotFoundException(`Purchase intent ${intentId} not found`);
+    }
+
+    let queuePosition: number | undefined;
+    let estimatedWaitTime: number | undefined;
+
+    if (intent.isActive()) {
+      const position = await this.purchaseIntentRepository.getQueuePosition(
+        intent.user_session_id,
+        intent.event_id
+      );
+      
+      if (position) {
+        queuePosition = position.position;
+        estimatedWaitTime = position.estimatedWaitTime;
+      }
+    }
+
+    return {
+      intent,
+      queuePosition,
+      estimatedWaitTime,
+    };
+  }
+
+  /**
+   * Get current queue position for a user's intent
+   */
+  async getQueuePosition(userSessionId: string, eventId: string): Promise<{
+    position: number;
+    totalAhead: number;
+    estimatedWaitTime?: number;
+  } | null> {
+    if (!this.isValidUUID(eventId)) {
+      throw new BadRequestException('Invalid event ID format');
+    }
+
+    return this.purchaseIntentRepository.getQueuePosition(userSessionId, eventId);
+  }
+
+  /**
+   * Cancel a user's purchase intent
+   */
+  async cancelPurchaseIntent(intentId: string, userSessionId: string): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    if (!this.isValidUUID(intentId)) {
+      throw new BadRequestException('Invalid intent ID format');
+    }
+
+    // Get the intent and verify ownership
+    const intent = await this.purchaseIntentRepository.findById(intentId);
+
+    if (!intent) {
+      throw new NotFoundException(`Purchase intent ${intentId} not found`);
+    }
+
+    if (intent.user_session_id !== userSessionId) {
+      throw new BadRequestException('You can only cancel your own purchase intents');
+    }
+
+    if (!intent.isActive()) {
+      return {
+        success: false,
+        message: `Cannot cancel intent - current status is ${intent.status}`,
+      };
+    }
+
+    // Cancel the intent by marking it as expired
+    const cancelled = await this.purchaseIntentRepository.updateIntentStatus(
+      intentId, 
+      PurchaseIntentStatus.EXPIRED
+    );
+
+    if (cancelled) {
+      this.logger.log(`Successfully cancelled intent ${intentId} for user ${userSessionId}`);
+      return {
+        success: true,
+        message: 'Purchase intent cancelled successfully',
+      };
+    } else {
+      return {
+        success: false,
+        message: 'Failed to cancel purchase intent',
+      };
+    }
+  }
+
+  /**
+   * Check if an intent has completed and get results
+   */
+  async checkIntentCompletion(intentId: string): Promise<{
+    is_completed: boolean;
+    status: PurchaseIntentStatus;
+    purchase_id?: string;
+    tickets?: TicketResponseDto[];
+    message?: string;
+  }> {
+    if (!this.isValidUUID(intentId)) {
+      throw new BadRequestException('Invalid intent ID format');
+    }
+
+    const intent = await this.purchaseIntentRepository.findById(intentId, ['event']);
+
+    if (!intent) {
+      throw new NotFoundException(`Purchase intent ${intentId} not found`);
+    }
+
+    const result = {
+      is_completed: intent.isCompleted(),
+      status: intent.status,
+    };
+
+    if (intent.status === PurchaseIntentStatus.COMPLETED) {
+      // Intent was successfully processed, get the tickets
+      try {
+        const tickets = await this.getTicketsByPurchase(intentId);
+        return {
+          ...result,
+          purchase_id: intentId,
+          tickets,
+          message: `Successfully purchased ${tickets.length} tickets`,
+        };
+      } catch (error) {
+        this.logger.warn(`Could not find tickets for completed intent ${intentId}`);
+        return {
+          ...result,
+          message: 'Purchase completed but tickets not found',
+        };
+      }
+    } else if (intent.status === PurchaseIntentStatus.FAILED) {
+      return {
+        ...result,
+        message: 'Purchase failed - tickets may no longer be available',
+      };
+    } else if (intent.status === PurchaseIntentStatus.EXPIRED) {
+      return {
+        ...result,
+        message: 'Purchase intent expired due to timeout',
+      };
+    }
+
+    return result;
   }
 
   /**

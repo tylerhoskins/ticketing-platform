@@ -23,12 +23,26 @@ import EmptyState from '@/components/UI/EmptyState';
 
 interface EventListProps {
   events: Event[];
+  /** Whether live updates are active */
+  isLive?: boolean;
+  /** Last update timestamp */
+  lastUpdate?: Date | null;
+  /** Set of event IDs that have recent changes */
+  changedEvents?: Set<string>;
+  /** Connection error if any */
+  error?: string | null;
 }
 
 type FilterType = 'all' | 'upcoming' | 'available' | 'past';
 type SortType = 'date' | 'created_at' | 'name';
 
-export default function EventList({ events }: EventListProps) {
+export default function EventList({ 
+  events, 
+  isLive = false,
+  lastUpdate,
+  changedEvents = new Set(),
+  error
+}: EventListProps) {
   const [filter, setFilter] = useState<FilterType>('upcoming');
   const [sort, setSort] = useState<SortType>('date');
   const [searchTerm, setSearchTerm] = useState('');
@@ -157,7 +171,14 @@ export default function EventList({ events }: EventListProps) {
           
           <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={6}>
             {filteredAndSortedEvents.map((event) => (
-              <EventCard key={event.id} event={event} />
+              <EventCard 
+                key={event.id} 
+                event={event}
+                isLive={isLive}
+                lastUpdate={lastUpdate}
+                hasRecentChanges={changedEvents.has(event.id)}
+                error={error}
+              />
             ))}
           </SimpleGrid>
         </>

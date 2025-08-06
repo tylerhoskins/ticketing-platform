@@ -13,26 +13,39 @@ interface ErrorMessageProps {
   title?: string;
   message: string;
   onRetry?: () => void;
+  variant?: 'error' | 'warning' | 'info';
 }
 
 export default function ErrorMessage({ 
-  title = 'Error', 
+  title,
   message, 
-  onRetry 
+  onRetry,
+  variant = 'error'
 }: ErrorMessageProps) {
+  const getDefaultTitle = () => {
+    switch (variant) {
+      case 'warning':
+        return 'Warning';
+      case 'info':
+        return 'Information';
+      default:
+        return 'Error';
+    }
+  };
+
   return (
     <VStack spacing={4} p={4}>
-      <Alert status="error" borderRadius="md">
+      <Alert status={variant} borderRadius="md">
         <AlertIcon />
         <VStack spacing={2} align="flex-start" flex={1}>
-          <AlertTitle>{title}</AlertTitle>
+          <AlertTitle>{title || getDefaultTitle()}</AlertTitle>
           <AlertDescription>{message}</AlertDescription>
         </VStack>
       </Alert>
       
       {onRetry && (
         <Button onClick={onRetry} variant="outline" size="sm">
-          Try Again
+          {variant === 'error' ? 'Try Again' : 'Retry Connection'}
         </Button>
       )}
     </VStack>

@@ -119,35 +119,25 @@ Get event details by ID.
 ```
 
 ### POST /api/events/:id/purchase
-Purchase tickets for an event.
+Create a purchase intent for tickets (fairness-aware queue system).
 
 **Request Body:**
 ```json
 {
-  "quantity": 2
+  "quantity": 2,
+  "user_session_id": "session-uuid-123"
 }
 ```
 
-**Response (Success):**
+**Response (Intent Created):**
 ```json
 {
   "success": true,
-  "message": "Successfully purchased 2 tickets",
-  "purchase_id": "123e4567-e89b-12d3-a456-426614174000",
-  "total_purchased": 2,
-  "tickets": [
-    {
-      "id": "ticket-uuid-1",
-      "event_id": "550e8400-e29b-41d4-a716-446655440000",
-      "purchase_id": "123e4567-e89b-12d3-a456-426614174000",
-      "purchased_at": "2024-01-01T12:00:00.000Z",
-      "event": {
-        "id": "550e8400-e29b-41d4-a716-446655440000",
-        "name": "Concert in the Park",
-        "date": "2024-12-25T19:00:00.000Z"
-      }
-    }
-  ]
+  "message": "Purchase intent created successfully",
+  "intent_id": "intent-uuid-456",
+  "queue_position": 3,
+  "estimated_wait_minutes": 2,
+  "status": "waiting"
 }
 ```
 
@@ -155,7 +145,7 @@ Purchase tickets for an event.
 ```json
 {
   "success": false,
-  "message": "Only 5 tickets available"
+  "message": "Event not found or not available for purchase"
 }
 ```
 
@@ -178,7 +168,99 @@ Get all tickets for an event (admin endpoint).
 }
 ```
 
+## Queue Management Endpoints
+
+### GET /api/queue/intent/:intentId/status
+Get current status and position of a purchase intent.
+
+**Response:**
+```json
+{
+  "intent_id": "intent-uuid-456",
+  "status": "waiting",
+  "queue_position": 2,
+  "estimated_wait_minutes": 1,
+  "requested_quantity": 2,
+  "event": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Concert in the Park",
+    "date": "2024-12-25T19:00:00.000Z"
+  },
+  "created_at": "2024-01-01T12:00:00.000Z"
+}
+```
+
+### GET /api/queue/event/:eventId/stats
+Get queue statistics for an event.
+
+**Response:**
+```json
+{
+  "event_id": "550e8400-e29b-41d4-a716-446655440000",
+  "total_waiting": 5,
+  "total_processing": 1,
+  "total_completed": 150,
+  "total_failed": 2,
+  "estimated_wait_minutes": 3,
+  "processing_rate_per_minute": 10
+}
+```
+
+### POST /api/queue/intent/:intentId/cancel
+Cancel a purchase intent.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Purchase intent cancelled successfully",
+  "intent_id": "intent-uuid-456"
+}
+```
+
+### GET /api/queue/health
+Get queue processor health status.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "processor_running": true,
+  "last_processed": "2024-01-01T12:00:00.000Z",
+  "intents_processed_today": 1250,
+  "average_processing_time_ms": 150
+}
+```
+
 ## Ticket Endpoints
+
+### GET /api/tickets/intent/:intentId/status
+Get intent status (alternative endpoint).
+
+**Response:** Same as GET /api/queue/intent/:intentId/status
+
+### GET /api/tickets/intent/:intentId/completion
+Check if an intent has completed and get final result.
+
+**Response (Completed):**
+```json
+{
+  "intent_id": "intent-uuid-456",
+  "status": "completed",
+  "success": true,
+  "purchase_id": "123e4567-e89b-12d3-a456-426614174000",
+  "total_tickets": 2,
+  "processing_time_ms": 1500,
+  "tickets": [
+    {
+      "id": "ticket-uuid-1",
+      "event_id": "550e8400-e29b-41d4-a716-446655440000",
+      "purchase_id": "123e4567-e89b-12d3-a456-426614174000",
+      "purchased_at": "2024-01-01T12:00:00.000Z"
+    }
+  ]
+}
+```
 
 ### GET /api/tickets/purchase/:purchaseId
 Get tickets by purchase ID.
@@ -232,10 +314,33 @@ All error responses follow this format:
 }
 ```
 
-## Concurrency Control
+## Fairness-Aware Queue System
 
-The ticket purchasing system implements:
-- **Pessimistic locking** on event records during purchase
-- **Optimistic locking** with version fields to handle race conditions
-- **Database transactions** to ensure data consistency
-- **Proper error handling** for concurrent access scenarios
+The ticket purchasing system implements a **fairness-aware queue system** that ensures first-come-first-served ordering:
+
+### Key Features:
+- **Purchase Intents**: All purchase requests create intents with microsecond-precision timestamps
+- **FIFO Processing**: Intents are processed in strict chronological order
+- **Real-time Status**: Users can track their queue position and estimated wait time
+- **Cancellation Support**: Users can cancel their queue position at any time
+- **Background Processing**: Queue processor runs every 2 seconds to handle intents
+
+### Fairness Guarantees:
+- **Temporal Ordering**: Requests are processed based on exact arrival time
+- **No Queue Jumping**: Later requests cannot complete before earlier ones
+- **Transparent Process**: Users see their exact position and estimated wait time
+- **Atomic Processing**: Each intent is processed atomically with pessimistic locking
+
+### Queue Status Flow:
+1. **waiting** → Intent created, waiting in queue
+2. **processing** → Intent being processed by queue service
+3. **completed** → Tickets successfully purchased
+4. **failed** → Purchase failed (insufficient tickets, expired event, etc.)
+5. **expired** → Intent expired after 30 minutes without processing
+
+### Technical Implementation:
+- **Pessimistic locking** on event records during actual ticket purchase
+- **Database transactions** to ensure atomicity of ticket allocation
+- **Microsecond timestamps** for precise ordering
+- **Background queue processor** with comprehensive error handling
+- **Real-time polling** for status updates (recommended 2-3 second intervals)

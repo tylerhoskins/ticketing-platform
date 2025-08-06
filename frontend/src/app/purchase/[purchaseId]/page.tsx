@@ -22,8 +22,10 @@ import {
 import { ArrowBackIcon, CheckCircleIcon, CalendarIcon } from '@chakra-ui/icons';
 import { apiClient, formatDate } from '@/lib/api';
 import { PurchaseSummary } from '@/types/api';
+import { IntentCompletion, PurchaseIntentStatus } from '@/types/queue';
 import LoadingSpinner from '@/components/UI/LoadingSpinner';
 import ErrorMessage from '@/components/UI/ErrorMessage';
+import QueuePosition from '@/components/Queue/QueuePosition';
 
 export default function PurchaseConfirmationPage() {
   const params = useParams();
@@ -32,8 +34,10 @@ export default function PurchaseConfirmationPage() {
   const toast = useToast();
 
   const [purchase, setPurchase] = useState<PurchaseSummary | null>(null);
+  const [intentCompletion, setIntentCompletion] = useState<IntentCompletion | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isIntent, setIsIntent] = useState<boolean>(false);
 
   const fetchPurchase = async () => {
     if (!purchaseId) return;
@@ -41,8 +45,36 @@ export default function PurchaseConfirmationPage() {
     try {
       setLoading(true);
       setError(null);
-      const data = await apiClient.getPurchaseSummary(purchaseId);
-      setPurchase(data);
+      
+      // First, try to determine if this is an intent ID or purchase ID
+      // Intent IDs are typically UUIDs, purchase IDs might be different format
+      // We'll try intent completion first, if it fails, try purchase summary
+      try {
+        const intentData = await apiClient.checkIntentCompletion(purchaseId);
+        setIntentCompletion(intentData);
+        setIsIntent(true);
+        
+        // If intent is completed successfully, also try to get the actual purchase data
+        if (intentData.status === PurchaseIntentStatus.COMPLETED && intentData.purchase_id) {
+          try {
+            const purchaseData = await apiClient.getPurchaseSummary(intentData.purchase_id);
+            setPurchase(purchaseData);
+          } catch {
+            // If purchase data is not available yet, that's ok
+            console.log('Purchase data not yet available for intent completion');
+          }
+        }
+      } catch (intentError) {
+        // If intent completion fails, try regular purchase summary
+        try {
+          const purchaseData = await apiClient.getPurchaseSummary(purchaseId);
+          setPurchase(purchaseData);
+          setIsIntent(false);
+        } catch (purchaseError) {
+          // Neither worked, this ID is invalid
+          throw new Error('Invalid purchase or intent ID');
+        }
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch purchase details';
       setError(errorMessage);
@@ -58,8 +90,15 @@ export default function PurchaseConfirmationPage() {
     }
   };
 
+  const handleQueueCompleted = (success: boolean, newPurchaseId?: string) => {
+    if (success && newPurchaseId) {
+      // Refresh the page data to show the completed purchase
+      fetchPurchase();
+    }
+  };
+
   useEffect(() => {
-    fetchPurchase();
+      fetchPurchase();
   }, [purchaseId]);
 
   if (loading) {
@@ -81,10 +120,136 @@ export default function PurchaseConfirmationPage() {
     );
   }
 
+  if (!purchase && !intentCompletion) {
+    return (
+      <VStack spacing={4}>
+        <ErrorMessage message={isIntent ? "Intent not found" : "Purchase not found"} />
+        <Button
+          leftIcon={<ArrowBackIcon />}
+          onClick={() => router.push('/')}
+          variant="outline"
+        >
+          Back to Events
+        </Button>
+      </VStack>
+    );
+  }
+
+  // If this is an intent that's not yet completed, show the queue status
+  if (isIntent && intentCompletion) {
+    if (intentCompletion.status === PurchaseIntentStatus.WAITING || intentCompletion.status === PurchaseIntentStatus.PROCESSING) {
+      return (
+        <VStack spacing={8} align="stretch">
+          <VStack spacing={4}>
+            <Heading size="xl" textAlign="center">
+              Purchase in Progress
+            </Heading>
+            <Text color="gray.600" textAlign="center" fontSize="lg">
+              Your purchase request is being processed
+            </Text>
+          </VStack>
+
+          {/* <QueuePosition
+            intentId={purchaseId}
+            onCompleted={handleQueueCompleted}
+            onCancelled={() => router.push('/')}
+          /> */}
+
+          <VStack spacing={4}>
+            <Button
+              leftIcon={<ArrowBackIcon />}
+              onClick={() => router.push('/')}
+              variant="outline"
+            >
+              Back to Events
+            </Button>
+          </VStack>
+        </VStack>
+      );
+    }
+
+    // Intent failed or expired
+    if (intentCompletion.status === PurchaseIntentStatus.FAILED || intentCompletion.status === PurchaseIntentStatus.EXPIRED) {
+      return (
+        <VStack spacing={8} align="stretch">
+          <VStack spacing={4}>
+            <CheckCircleIcon color="red.500" boxSize={16} />
+            <Heading size="xl" color="red.600" textAlign="center">
+              Purchase {intentCompletion.status === PurchaseIntentStatus.FAILED ? 'Failed' : 'Expired'}
+            </Heading>
+            <Text color="gray.600" textAlign="center" fontSize="lg">
+              {intentCompletion.message || 'Your purchase request could not be completed'}
+            </Text>
+          </VStack>
+
+          <Alert status="error" borderRadius="md">
+            <AlertIcon />
+            <Box>
+              <Text fontWeight="semibold">
+                {intentCompletion.status === PurchaseIntentStatus.FAILED ? 'Purchase Failed' : 'Request Expired'}
+              </Text>
+              <Text fontSize="sm">
+                {intentCompletion.status === PurchaseIntentStatus.FAILED 
+                  ? 'The tickets may no longer be available or there was a processing error.'
+                  : 'Your purchase request was not processed within the allowed time limit.'
+                }
+              </Text>
+            </Box>
+          </Alert>
+
+          {intentCompletion.event && (
+            <Card>
+              <CardHeader>
+                <Heading size="md">Event Details</Heading>
+              </CardHeader>
+              
+              <CardBody>
+                <VStack spacing={4} align="stretch">
+                  <VStack spacing={2} align="flex-start">
+                    <Heading size="lg" color="brand.600">
+                      {intentCompletion.event.name}
+                    </Heading>
+                    
+                    <HStack color="gray.600">
+                      <CalendarIcon />
+                      <Text fontSize="lg">{formatDate(intentCompletion.event.date)}</Text>
+                    </HStack>
+                  </VStack>
+                </VStack>
+              </CardBody>
+            </Card>
+          )}
+
+          <HStack spacing={4} justify="center" wrap="wrap">
+            <Button
+              leftIcon={<ArrowBackIcon />}
+              onClick={() => router.push('/')}
+              variant="outline"
+              size="lg"
+            >
+              Browse Events
+            </Button>
+            
+            {intentCompletion.event && (
+              <Button
+                onClick={() => router.push(`/events/${intentCompletion.event!.id}`)}
+                colorScheme="brand"
+                size="lg"
+              >
+                Try Again
+              </Button>
+            )}
+          </HStack>
+        </VStack>
+      );
+    }
+  }
+
+  // Show completed purchase (either direct purchase or completed intent)
   if (!purchase) {
     return (
       <VStack spacing={4}>
-        <ErrorMessage message="Purchase not found" />
+        <ErrorMessage message="Purchase details not available" />
         <Button
           leftIcon={<ArrowBackIcon />}
           onClick={() => router.push('/')}
@@ -106,6 +271,7 @@ export default function PurchaseConfirmationPage() {
         </Heading>
         <Text color="gray.600" textAlign="center" fontSize="lg">
           Your tickets have been confirmed
+          {isIntent && ' (processed through queue)'}
         </Text>
       </VStack>
 
@@ -123,6 +289,26 @@ export default function PurchaseConfirmationPage() {
                 {purchase.purchase_id}
               </Text>
             </HStack>
+            
+            {isIntent && intentCompletion && (
+              <>
+                <HStack justify="space-between">
+                  <Text fontWeight="semibold">Intent ID:</Text>
+                  <Text fontFamily="mono" fontSize="sm" color="gray.600">
+                    {purchaseId}
+                  </Text>
+                </HStack>
+                
+                {intentCompletion.processing_time && (
+                  <HStack justify="space-between">
+                    <Text fontWeight="semibold">Processing Time:</Text>
+                    <Text fontSize="sm" color="gray.600">
+                      {Math.round(intentCompletion.processing_time / 1000)} seconds
+                    </Text>
+                  </HStack>
+                )}
+              </>
+            )}
 
             <Divider />
 
@@ -232,8 +418,9 @@ export default function PurchaseConfirmationPage() {
         <Box>
           <Text fontWeight="semibold">Thank you for your purchase!</Text>
           <Text fontSize="sm">
-            This is a demo system. In a real application, you would receive 
+            This is a demo system with fair queuing. In a real application, you would receive 
             email confirmation and mobile tickets.
+            {isIntent && ' Your purchase was processed through our fair queue system.'}
           </Text>
         </Box>
       </Alert>

@@ -17,11 +17,14 @@ import {
   Alert,
   AlertIcon,
   useToast,
+  useDisclosure,
 } from '@chakra-ui/react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { apiClient } from '@/lib/api';
+import { apiClient, getUserSessionId } from '@/lib/api';
 import { Event } from '@/types/api';
+import { CreatePurchaseIntentRequest } from '@/types/queue';
+import PurchaseQueueModal from '@/components/Queue/PurchaseQueueModal';
 
 interface TicketPurchaseFormProps {
   event: Event;
@@ -32,8 +35,11 @@ export default function TicketPurchaseForm({ event, onPurchaseSuccess }: TicketP
   const [quantity, setQuantity] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [intentId, setIntentId] = useState<string | null>(null);
+  const [userSessionId] = useState(() => getUserSessionId());
   const toast = useToast();
   const router = useRouter();
+  const { isOpen: isQueueModalOpen, onOpen: onQueueModalOpen, onClose: onQueueModalClose } = useDisclosure();
 
   const maxQuantity = Math.min(10, event.available_tickets);
   const isDisabled = event.available_tickets === 0 || !event;
@@ -47,31 +53,37 @@ export default function TicketPurchaseForm({ event, onPurchaseSuccess }: TicketP
       setLoading(true);
       setError(null);
 
-      const response = await apiClient.purchaseTickets(event.id, { quantity });
+      const request: CreatePurchaseIntentRequest = {
+        quantity,
+        user_session_id: userSessionId,
+      };
 
-      if (response.success && response.purchase_id) {
+      const response = await apiClient.createPurchaseIntent(event.id, request);
+
+      if (response.success && response.intent_id) {
+        setIntentId(response.intent_id);
+        onQueueModalOpen();
+
+        
         toast({
-          title: 'Purchase Successful!',
-          description: `Successfully purchased ${quantity} ticket${quantity > 1 ? 's' : ''}`,
-          status: 'success',
+          title: 'Added to Purchase Queue',
+          description: `You're in position ${response.queue_position || 'TBD'} for ${quantity} ticket${quantity > 1 ? 's' : ''}`,
+          status: 'info',
           duration: 5000,
           isClosable: true,
         });
-
-        // Redirect to purchase confirmation page
-        router.push(`/purchase/${response.purchase_id}`);
         
         if (onPurchaseSuccess) {
           onPurchaseSuccess();
         }
       } else {
-        throw new Error(response.message || 'Purchase failed');
+        throw new Error(response.message || 'Failed to join purchase queue');
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Purchase failed';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to join purchase queue';
       setError(errorMessage);
       toast({
-        title: 'Purchase Failed',
+        title: 'Purchase Request Failed',
         description: errorMessage,
         status: 'error',
         duration: 5000,
@@ -79,6 +91,16 @@ export default function TicketPurchaseForm({ event, onPurchaseSuccess }: TicketP
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePurchaseComplete = (success: boolean, purchaseId?: string) => {
+    if (success && purchaseId) {
+      // The modal will redirect to the purchase page
+      // No additional action needed here
+    } else {
+      // Purchase failed, reset form state
+      setIntentId(null);
     }
   };
 
@@ -156,18 +178,28 @@ export default function TicketPurchaseForm({ event, onPurchaseSuccess }: TicketP
             size="lg"
             onClick={handlePurchase}
             isLoading={loading}
-            loadingText="Processing..."
+            loadingText="Joining queue..."
             isDisabled={isDisabled || quantity < 1 || quantity > maxQuantity}
             w="full"
           >
-            Purchase {quantity} Ticket{quantity > 1 ? 's' : ''}
+            Join Purchase Queue
           </Button>
 
           <Text fontSize="xs" color="gray.500" textAlign="center">
-            This is a demo system. No actual payment is processed.
+            Fair queuing system ensures everyone gets a chance. No actual payment is processed.
           </Text>
         </VStack>
       </CardBody>
+
+      {/* Purchase Queue Modal */}
+      <PurchaseQueueModal
+        isOpen={isQueueModalOpen}
+        onClose={onQueueModalClose}
+        intentId={intentId}
+        eventName={event.name}
+        requestedQuantity={quantity}
+        onPurchaseComplete={handlePurchaseComplete}
+      />
     </Card>
   );
 }

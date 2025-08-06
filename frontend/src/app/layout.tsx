@@ -5,7 +5,7 @@ import ErrorBoundary from '@/components/UI/ErrorBoundary';
 import { Container, Box } from '@chakra-ui/react';
 
 export const metadata: Metadata = {
-  title: 'WeOn - Event Ticket System',
+  title: 'Tixcel - Event Ticket System',
   description: 'Simple ticket purchasing system for events',
 };
 

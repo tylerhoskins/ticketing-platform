@@ -28,7 +28,7 @@ export default function Header() {
         <Flex h={16} alignItems="center" justifyContent="space-between">
           <Link as={NextLink} href="/" _hover={{ textDecoration: 'none' }}>
             <Heading size="lg" color="brand.600">
-              WeOn
+              Tixcel
             </Heading>
           </Link>
 

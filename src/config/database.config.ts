@@ -1,6 +1,7 @@
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { Event } from '../entities/event.entity';
 import { Ticket } from '../entities/ticket.entity';
+import { PurchaseIntent } from '../entities/purchase-intent.entity';
 
 export const databaseConfig: TypeOrmModuleOptions = {
   type: 'postgres',

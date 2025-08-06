@@ -1,27 +1,30 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { DatabaseModule } from '../../database/database.module';
-import { TicketController } from './ticket.controller';
-import { TicketService } from './ticket.service';
-import { EventService } from '../event/event.service';
+import { ScheduleModule } from '@nestjs/schedule';
+import { QueueController } from './queue.controller';
+import { QueueService } from '../../services/queue.service';
 import { PurchaseIntentRepository } from '../../repositories/purchase-intent.repository';
 import { EventRepository } from '../../repositories/event.repository';
 import { PurchaseIntent } from '../../entities/purchase-intent.entity';
 import { Event } from '../../entities/event.entity';
 import { Ticket } from '../../entities/ticket.entity';
+import { EventModule } from '../event/event.module';
 
 @Module({
   imports: [
-    DatabaseModule,
     TypeOrmModule.forFeature([PurchaseIntent, Event, Ticket]),
+    ScheduleModule.forRoot(), // Enable cron jobs for background processing
+    EventModule, // Import EventModule to access EventService
   ],
-  controllers: [TicketController],
+  controllers: [QueueController],
   providers: [
-    TicketService, 
-    EventService,
+    QueueService,
     PurchaseIntentRepository,
     EventRepository,
   ],
-  exports: [TicketService],
+  exports: [
+    QueueService,
+    PurchaseIntentRepository,
+  ],
 })
-export class TicketModule {}
+export class QueueModule {}

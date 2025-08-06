@@ -40,9 +40,10 @@ export class EventRepository {
   }
 
   /**
-   * Purchase tickets with proper concurrency control using pessimistic locking
+   * Purchase tickets with simplified pessimistic locking
    * This method uses a database transaction with row-level locking to prevent
    * race conditions during concurrent ticket purchases.
+   * The dual-locking approach has been removed in favor of queue-based fairness.
    */
   async purchaseTickets(
     eventId: string,
@@ -74,24 +75,14 @@ export class EventRepository {
         };
       }
 
-      // Update event ticket count with optimistic locking check
-      const updateResult = await queryRunner.manager.update(
+      // Update event ticket count (simplified - no optimistic locking needed)
+      await queryRunner.manager.update(
         Event,
-        { id: eventId, version: event.version },
+        { id: eventId },
         {
           available_tickets: event.available_tickets - quantity,
-          version: event.version + 1,
         },
       );
-
-      // Check if optimistic locking failed (version mismatch)
-      if (updateResult.affected === 0) {
-        await queryRunner.rollbackTransaction();
-        return {
-          success: false,
-          message: 'Ticket availability changed, please try again',
-        };
-      }
 
       // Create ticket records
       const tickets: Ticket[] = [];

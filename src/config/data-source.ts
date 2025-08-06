@@ -1,6 +1,7 @@
 import { DataSource } from 'typeorm';
 import { Event } from '../entities/event.entity';
 import { Ticket } from '../entities/ticket.entity';
+import { PurchaseIntent } from '../entities/purchase-intent.entity';
 
 export const AppDataSource = new DataSource({
   type: 'postgres',
@@ -11,7 +12,7 @@ export const AppDataSource = new DataSource({
   database: process.env.DB_NAME || 'app_db',
   synchronize: false, // Use migrations instead
   logging: process.env.NODE_ENV === 'development',
-  entities: [Event, Ticket],
+  entities: [Event, Ticket, PurchaseIntent],
   migrations: ['src/migrations/*.ts'],
   migrationsRun: false,
   // Optimized for concurrent access
