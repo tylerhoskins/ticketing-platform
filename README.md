@@ -28,3 +28,6 @@ I decided on this approach because I wanted fairness, and with this approach, re
 
 The intents are batch-processed every 2 seconds. 
 
+# Motivations
+
+This project was an experiment with Claude Code and a subagent workflow. It leverages three separate agents, one for the database, the backend, and the frontend. 
