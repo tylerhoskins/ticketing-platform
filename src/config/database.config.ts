@@ -10,7 +10,7 @@ export const databaseConfig: TypeOrmModuleOptions = {
   username: process.env.DB_USERNAME || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
   database: process.env.DB_NAME || 'app_db',
-  entities: [Event, Ticket],
+  entities: [Event, Ticket, PurchaseIntent],
   synchronize: false, // Use migrations for production safety
   logging: process.env.NODE_ENV === 'development',
   // Connection pool settings optimized for concurrent ticket purchases
